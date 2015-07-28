@@ -13,7 +13,7 @@ from collections import defaultdict
 import json
 
 TEMP_SUBDIR = 'temp'
-TIMEOUT = 20
+TIMEOUT = 10
 POLL_INTERVAL = 0.2
 
 def get_hashes(filepath, limit=None):
@@ -88,7 +88,7 @@ def process_file_one(arg):
         wavpath = to_wav(root + '/' + filename)
         if wavpath is None:
             return (filename, None)
-        current_hashes = get_hashes(wavpath, limit=30)
+        current_hashes = get_hashes(wavpath, limit=arg[3])
         if current_hashes is None:
             return (filename, None)
         count = count_align_matches(target_hashes, current_hashes)
@@ -102,17 +102,19 @@ def process_file_one(arg):
         return ('', 0)
 
 class ModSearch:
-    def __init__(self):
+    def __init__(self, target_path, search_path=None, temp_path=None, duration_limit=None):
         #Keep track of how hideously long this takes
         self.START_TIME = calendar.timegm(time.gmtime())
         self.SEARCHED = 0
         self.search_path = '/home/ketsol/mods/'
         self.temp_path = './temp' + '/' + TEMP_SUBDIR
-        self.target_hashes = get_hashes("./test/2.wav")
+        print("Fingerprinting Target...")
+        self.target_hashes = get_hashes(target_path)
         self.largest_counts = {}
         self.checked_fileset = set()
         self.mp = True
-        self.p_count = 4
+        self.p_count = multiprocessing.cpu_count()
+        self.duration_limit = 30
         if os.path.exists(self.search_path + 'files_log'):
             with open(self.search_path + 'files_log', 'r') as files_log:
                 self.checked_fileset = set(files_log.read().splitlines())
@@ -120,6 +122,16 @@ class ModSearch:
             with open(self.search_path + 'match_log', 'r') as match_log:
                 self.largest_counts = json.load(match_log) 
             print('Loaded match log ' + str(self.largest_counts))   
+   
+        if search_path is not None: 
+            self.search_path = search_path
+            assert(temp_path is not None)
+            if temp_path[-1] == '/':
+                self.temp_path = temp_path + TEMP_SUBDIR
+            else:
+                self.temp_path = temp_path + '/' + TEMP_SUBDIR
+        if duration_limit is not None:
+            self.duration_limit = int(duration_limit)
 
     #Unzip all of the nested zips in a directory, without regard for flattening
     #their directory structures... we just want the mods!
@@ -179,7 +191,7 @@ class ModSearch:
             wavpath = to_wav(root + '/' + filename)
             if wavpath is None:
                 return None
-            current_hashes = get_hashes(wavpath, limit=30)
+            current_hashes = get_hashes(wavpath, limit=self.duration_limit)
             if current_hashes is None:
                 return None
             count = count_align_matches(self.target_hashes, current_hashes)
@@ -220,7 +232,8 @@ class ModSearch:
                 #Pack object state into a list... pretty nasty, feels like
                 #OpenCL stuff
                 map_input = [[root, filename,
-                self.target_hashes] for filename in files if filename not in\
+                self.target_hashes, self.duration_limit]\
+                for filename in files if filename not in\
                 self.checked_fileset]
                 results = self.p.map(process_file_one, map_input)
                 self.SEARCHED = self.SEARCHED + len(files)
@@ -235,7 +248,15 @@ class ModSearch:
                     self.process_result(count, filename)
 
 def main():
-    m_modsearcher = ModSearch()
+    if len(sys.argv) > 1:
+        assert(len(sys.argv) > 3)
+        if len(sys.argv) > 4:
+            m_modsearcher = ModSearch(sys.argv[1], sys.argv[2], sys.argv[3],\
+            sys.argv[4])
+        else:
+            m_modsearcher = ModSearch(sys.argv[1], sys.argv[2], sys.argv[3])
+    else: 
+        m_modsearcher = ModSearch("./test/2.wav")
     m_modsearcher.process_all_zips()    
     
 
